@@ -131,7 +131,11 @@ end
 local function isSeatFree(seat)
     if not seat then return false end
     local pn = seat:FindFirstChild("PlayerName")
-    if pn and typeof(pn.Value) == "string" then
+    -- Wenn kein PlayerName-Value existiert → als frei behandeln
+    if not pn then
+        return true
+    end
+    if typeof(pn.Value) == "string" then
         return pn.Value == ""
     end
     return false
@@ -145,8 +149,9 @@ local function pressEOnce()
     task.wait(3)
 end
 
+-- Spezielles Anflug-Manöver zum Auto mit Fallschirm- und E-Logik
 local function flyPlayerToCar(root, seat, playerName)
-    if not root or not root.Parent or not seat then return end
+    if not root or not root.Parent or not seat then return false end
 
     -- Physik reset
     for _, v in pairs(root:GetChildren()) do
@@ -177,7 +182,7 @@ local function flyPlayerToCar(root, seat, playerName)
     -- B: Rüber auf 360
     flyTo(root, Vector3.new(target.X, 360, target.Z), 150, bg, bv, false)
 
-    -- C: Beginne Sinkflug
+    -- C: Sinkflug starten (etwas über dem Seat)
     flyTo(root, Vector3.new(target.X, target.Y + 25, target.Z), 150, bg, bv, false)
 
     -- Bodennah → kontrollierter Lande-Modus
@@ -185,23 +190,23 @@ local function flyPlayerToCar(root, seat, playerName)
     bg:Destroy()
     bv:Destroy()
 
-    -- Fallschirm-Auto-System kurz deaktivieren
+    -- Auto-Parachute während der manuellen Sequenz aus
     getgenv()._autoParachuteEnabled = false
 
     --------------------------------------------------------------------
-    -- 🔥 1 Sekunde warten nachdem Sinkflug beginnt
+    -- 1 Sekunde warten nachdem Sinkflug beginnt
     --------------------------------------------------------------------
     task.wait(1)
 
     --------------------------------------------------------------------
-    -- 🔥 SPACE einmal drücken → FALLSCHIRM öffnen
+    -- SPACE einmal drücken → FALLSCHIRM öffnen
     --------------------------------------------------------------------
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
     task.wait(0.05)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
 
     --------------------------------------------------------------------
-    -- 🔥 Wenn nur noch 10 Studs → Fallschirm lösen
+    -- Wenn nur noch 10 Studs → Fallschirm lösen
     --------------------------------------------------------------------
     while root.Parent do
         local dist = (root.Position - target).Magnitude
@@ -216,48 +221,52 @@ local function flyPlayerToCar(root, seat, playerName)
     end
 
     --------------------------------------------------------------------
-    -- 🔥 2 Sek Warten nach Fallschirm lösen
+    -- 2 Sek Warten nach Fallschirm lösen
     --------------------------------------------------------------------
     task.wait(2)
 
     --------------------------------------------------------------------
-    -- 🔥 Einmal E drücken
+    -- EINSTEIG-LOGIK (max. 2 Versuche, nur wenn wirklich nötig)
     --------------------------------------------------------------------
-    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-    task.wait(0.05)
-    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-
-    --------------------------------------------------------------------
-    -- 🔥 3 Sekunden warten ob man sitzt
-    --------------------------------------------------------------------
-    task.wait(3)
-
     local seatPlayer = seat:FindFirstChild("PlayerName")
+
+    -- schon drin? → fertig
     if seatPlayer and seatPlayer.Value == playerName then
-        print("Erfolgreich eingestiegen!")
+        print("Bereits automatisch eingestiegen.")
         getgenv()._autoParachuteEnabled = true
-        return
+        return true
     end
 
-    --------------------------------------------------------------------
-    -- ❗ Noch nicht drin → 2. Versuch
-    --------------------------------------------------------------------
+    -- Versuch 1
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
     task.wait(0.05)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 
     task.wait(3)
-
-    --------------------------------------------------------------------
-    -- ❗ Wenn nach zweitem Versuch immer noch nicht → aufgeben
-    --------------------------------------------------------------------
-    if seatPlayer and seatPlayer.Value ~= playerName then
-        warn("Konnte nicht einsteigen. Aufgabe.")
+    seatPlayer = seat:FindFirstChild("PlayerName")
+    if seatPlayer and seatPlayer.Value == playerName then
+        print("Einsteigen erfolgreich (Versuch 1).")
+        getgenv()._autoParachuteEnabled = true
+        return true
     end
 
-    getgenv()._autoParachuteEnabled = true
-end
+    -- Versuch 2
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    task.wait(0.05)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 
+    task.wait(3)
+    seatPlayer = seat:FindFirstChild("PlayerName")
+    if seatPlayer and seatPlayer.Value == playerName then
+        print("Einsteigen erfolgreich (Versuch 2).")
+        getgenv()._autoParachuteEnabled = true
+        return true
+    end
+
+    warn("Konnte nicht einsteigen. Aufgabe.")
+    getgenv()._autoParachuteEnabled = true
+    return false
+end
 
 -- Suche nach dem nächsten freien Camaro (workspace.Vehicles)
 local function findNearestFreeCamaro(rootPart)
@@ -295,10 +304,9 @@ local function takeOverNearestCamaro(rootPart, playerName)
         return nil
     end
 
-    flyPlayerToCar(root, seat, myName)
-
-    if isSeatOwnedByPlayer(seat, playerName) then
-        print("Camaro übernommen.")
+    local ok = flyPlayerToCar(rootPart, seat, playerName)
+    if ok and isSeatOwnedByPlayer(seat, playerName) then
+        print("Camaro als Ersatzfahrzeug übernommen.")
         return camaro.PrimaryPart or seat
     else
         warn("Konnte nicht in den Camaro einsteigen.")
@@ -351,10 +359,9 @@ local function getCarStrict()
         -- 2. Check: Wir sitzen NICHT -> Hinfliegen mit Fallschirm-Manöver
         if seat then
             warn("Eigenes Auto leer. Fliege Spieler hin (mit Fallschirm-Landung)...")
-            flyPlayerToCar(root, seat, myName)
+            local ok = flyPlayerToCar(root, seat, myName)
 
-
-            if isSeatOwnedByPlayer(seat, myName) then
+            if ok and isSeatOwnedByPlayer(seat, myName) then
                 print("Erfolgreich ins eigene Auto eingestiegen!")
                 return myCar.PrimaryPart or seat
             else
@@ -397,7 +404,6 @@ local function getCarStrict()
     warn("Fallback: Suche nach nächstem freien Camaro in workspace.Vehicles...")
     local camaroMover = takeOverNearestCamaro(root, myName)
     if camaroMover then
-        print("Camaro als Ersatzfahrzeug übernommen.")
         return camaroMover
     end
 
@@ -487,4 +493,4 @@ getgenv().startRoute = function(jsonFileName, speed)
     print("Route fertig!")
 end
 
-print("Geladen. Nutze: startRoute('Prison.json', 300)")
+print("Geladen. Nutze: startRoute('Prison.json', 300')")
