@@ -100,7 +100,7 @@ local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
             bg.CFrame = CFrame.new(currentPos) * CFrame.fromOrientation(0, rotY, 0)
         end
 
-        local threshold = isLanding and 10 or 20
+        local threshold = isLanding and 5 or 10
         if dist < threshold then
             arrived = true
             if connection then connection:Disconnect() end
@@ -352,6 +352,7 @@ local function getCarStrict()
         if seat then
             warn("Eigenes Auto leer. Fliege Spieler hin (mit Fallschirm-Landung)...")
             flyPlayerToCar(root, seat, myName)
+
 
             if isSeatOwnedByPlayer(seat, myName) then
                 print("Erfolgreich ins eigene Auto eingestiegen!")
