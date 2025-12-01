@@ -28,12 +28,11 @@ local function getMobileRoot()
     end
 
     -- Versuch 2: Fallback -> Wir bewegen einfach DICH (HumanoidRootPart)
-    -- Wenn du im Auto sitzt, kommt das Auto meistens mit.
     warn("Sitz nicht erkannt! Bewege HumanoidRootPart...")
     return root
 end
 
--- 2. Flug-Physik
+-- 2. Flug-Physik (Angepasst: Bleibt immer waagerecht!)
 local function flyTo(moverPart, targetPos, speed, bg, bv)
     local arrived = false
     local connection
@@ -48,8 +47,21 @@ local function flyTo(moverPart, targetPos, speed, bg, bv)
         local diff = targetPos - currentPos
         local dist = diff.Magnitude
         
-        bg.CFrame = CFrame.new(currentPos, targetPos)
+        -- BEWEGUNG (Velocity): Geht weiterhin zum echten Ziel (auch hoch/runter)
         bv.Velocity = diff.Unit * speed
+        
+        -- DREHUNG (Gyro): Ignoriert die Höhe des Ziels!
+        local flatDist = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(currentPos.X, 0, currentPos.Z)).Magnitude
+        
+        if flatDist > 2 then
+            -- Wenn wir uns seitwärts bewegen: Zum Ziel drehen, aber Y gleich lassen (damit es flach bleibt)
+            bg.CFrame = CFrame.new(currentPos, Vector3.new(targetPos.X, currentPos.Y, targetPos.Z))
+        else
+            -- Wenn wir nur strikt nach oben/unten fliegen (keine seitwärts Bewegung):
+            -- Behalten wir die aktuelle Blickrichtung bei, zwingen sie aber waagerecht (Pitch/Roll = 0)
+            local _, rotY, _ = moverPart.CFrame:ToOrientation()
+            bg.CFrame = CFrame.new(currentPos) * CFrame.fromOrientation(0, rotY, 0)
+        end
         
         if dist < 10 then 
             arrived = true
@@ -109,8 +121,11 @@ getgenv().startRoute = function(jsonFileName, speed)
             if i == 1 then
                 -- Start Manöver: Hoch -> Rüber -> Runter
                 local startPos = moverPart.Position
+                -- 1. Hoch (Bleibt jetzt flach!)
                 flyTo(moverPart, Vector3.new(startPos.X, 300, startPos.Z), speed, bg, bv)
+                -- 2. Rüber (Bleibt flach)
                 flyTo(moverPart, Vector3.new(target.X, 300, target.Z), speed, bg, bv)
+                -- 3. Runter (Bleibt flach, keine Sturzflug-Optik)
                 flyTo(moverPart, target, speed, bg, bv)
             else
                 -- Normal weiter
