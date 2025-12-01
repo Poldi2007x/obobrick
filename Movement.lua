@@ -6,31 +6,64 @@ local HttpService = game:GetService("HttpService")
 -- !!! GITHUB RAW LINK !!!
 local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/" 
 
--- 1. Funktion: Auto/Teil holen
+-- 1. Funktion: Auto finden (Erweiterte Logik: State & PlayerName)
 local function getMobileRoot()
     local player = Players.LocalPlayer
+    local myName = player.Name
     local char = player.Character or player.CharacterAdded:Wait()
-    local hum = char:WaitForChild("Humanoid")
     local root = char:WaitForChild("HumanoidRootPart")
+    
+    local vehicles = workspace:FindFirstChild("Vehicles")
 
-    -- Immer Auto Spawn Befehl senden
+    -- HILFSFUNKTION: Sucht dein Auto anhand des Namens im Sitz
+    local function findMyCar()
+        if not vehicles then return nil end
+        for _, car in pairs(vehicles:GetChildren()) do
+            -- 1. Hat das Auto den State mit deinem Namen?
+            if car:FindFirstChild("_VehicleState_" .. myName) then
+                -- 2. Steht dein Name im Sitz-Value?
+                local seat = car:FindFirstChild("Seat")
+                if seat and seat:FindFirstChild("PlayerName") then
+                    if seat.PlayerName.Value == myName then
+                        return car.PrimaryPart or seat -- Auto gefunden!
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    -- SCHRITT 1: Prüfen, ob wir schon sitzen
+    local currentCarPart = findMyCar()
+    if currentCarPart then
+        print("Bereits im Auto gefunden: " .. currentCarPart.Parent.Name)
+        return currentCarPart
+    end
+
+    -- SCHRITT 2: Falls nicht, neues Auto spawnen
+    warn("Kein Auto erkannt. Sende Spawn-Befehl...")
     local remote = ReplicatedStorage:WaitForChild("GarageSpawnVehicle", 2)
     if remote then 
         remote:FireServer("Chassis", "Deja") 
     end
     
-    task.wait(1)
-
-    if hum.SeatPart then
-        return hum.SeatPart 
+    -- SCHRITT 3: Warten bis das Auto da ist (Loop)
+    -- Wir prüfen ca. 2 Sekunden lang, ob das Auto aufgetaucht ist
+    for i = 1, 20 do
+        task.wait(0.1) -- Warte kurz
+        currentCarPart = findMyCar() -- Suche erneut
+        if currentCarPart then
+            print("Auto erfolgreich gespawnt und erkannt!")
+            return currentCarPart
+        end
     end
 
-    warn("Sitz nicht erkannt! Bewege HumanoidRootPart...")
+    -- NOTFALL: Falls das Spawnen nicht geklappt hat
+    warn("Konnte Sitz nicht verifizieren! Nutze Fallback (HumanoidRootPart).")
     return root
 end
 
--- 2. Flug-Physik mit SANFTER LANDUNG
--- Neuer Parameter: isLanding (true/false)
+-- 2. Flug-Physik mit SANFTER LANDUNG & WAAGERECHTEM FLUG
 local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
     local arrived = false
     local connection
@@ -45,16 +78,12 @@ local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
         local diff = targetPos - currentPos
         local dist = diff.Magnitude
         
-        -- GESCHWINDIGKEITS-LOGIK
+        -- GESCHWINDIGKEITS-LOGIK (Bremsen bei Landung)
         local currentSpeed = maxSpeed
-        
         if isLanding then
-            -- Bremsweg beginnt bei 150 Studs Abstand
             local brakeDistance = 150
             if dist < brakeDistance then
-                -- Wir berechnen einen Faktor von 0 bis 1
                 local factor = dist / brakeDistance
-                -- Die Geschwindigkeit wird langsamer, aber nie unter 15 (damit wir ankommen)
                 currentSpeed = math.max(15, maxSpeed * factor)
             end
         end
@@ -62,20 +91,19 @@ local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
         -- BEWEGUNG SETZEN
         bv.Velocity = diff.Unit * currentSpeed
         
-        -- DREHUNG (Gyro) - Waagerecht bleiben
+        -- DREHUNG (Gyro) - Waagerecht bleiben (keine Rakete)
         local flatDist = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(currentPos.X, 0, currentPos.Z)).Magnitude
         
         if flatDist > 5 then
             -- Zum Ziel drehen, aber Y ignorieren (flach bleiben)
             bg.CFrame = CFrame.new(currentPos, Vector3.new(targetPos.X, currentPos.Y, targetPos.Z))
         else
-            -- Wenn wir fast nur vertikal fallen: Ausrichtung beibehalten und gerade ziehen
+            -- Wenn wir fast nur vertikal fallen/steigen: Ausrichtung beibehalten
             local _, rotY, _ = moverPart.CFrame:ToOrientation()
             bg.CFrame = CFrame.new(currentPos) * CFrame.fromOrientation(0, rotY, 0)
         end
         
         -- ANKUNFT CHECK
-        -- Bei Landung sind wir strenger (5 studs), sonst 10
         local threshold = isLanding and 5 or 10
         if dist < threshold then 
             arrived = true
@@ -139,7 +167,6 @@ getgenv().startRoute = function(jsonFileName, speed)
                 flyTo(moverPart, Vector3.new(target.X, 300, target.Z), speed, bg, bv, false)
                 
                 -- 3. Runter (SANFTE LANDUNG AKTIVIEREN)
-                -- Hier setzen wir 'true' am Ende
                 flyTo(moverPart, target, speed, bg, bv, true)
             else
                 -- Normal weiter zu den nächsten Punkten (Schnell)
