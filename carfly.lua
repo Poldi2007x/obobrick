@@ -20,9 +20,6 @@ local function getCar()
     warn("Spawning Car...")
     local remote = ReplicatedStorage:WaitForChild("GarageSpawnVehicle", 5)
     if remote then remote:FireServer("Chassis", "Deja") end
-    
-    local vehicle = hum.SeatPart.Parent
-    return vehicle.PrimaryPart or hum.SeatPart
 end
 
 -- Hilfsfunktion: Fliegen
