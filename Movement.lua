@@ -145,8 +145,7 @@ local function pressEOnce()
     task.wait(3)
 end
 
--- Spezielles Anflug-Manöver zum Auto mit Fallschirmsequenz
-local function flyPlayerToCar(root, seat)
+local function flyPlayerToCar(root, seat, playerName)
     if not root or not root.Parent or not seat then return end
 
     -- Physik reset
@@ -169,48 +168,96 @@ local function flyPlayerToCar(root, seat)
     local startPos = root.Position
     local target   = seat.Position
 
+    -- FlyTo für Jailbreak
+    getgenv()._inFlyTo = true
+
     -- A: Hoch auf 360
     flyTo(root, Vector3.new(startPos.X, 360, startPos.Z), 150, bg, bv, false)
-    -- B: Rüber auf 360
-    flyTo(root, Vector3.new(target.X, 360, target.Z),     150, bg, bv, false)
-    -- C: Nur bis etwas über dem Seat runter (z.B. +10)
-    flyTo(root, Vector3.new(target.X, target.Y + 10, target.Z), 150, bg, bv, false)
 
-    -- Aktive Fly-Steuerung beenden
+    -- B: Rüber auf 360
+    flyTo(root, Vector3.new(target.X, 360, target.Z), 150, bg, bv, false)
+
+    -- C: Beginne Sinkflug
+    flyTo(root, Vector3.new(target.X, target.Y + 25, target.Z), 150, bg, bv, false)
+
+    -- Bodennah → kontrollierter Lande-Modus
+    getgenv()._inFlyTo = false
     bg:Destroy()
     bv:Destroy()
-    getgenv()._inFlyTo = false
 
-    -- Auto-Parachute kurz deaktivieren, wir machen jetzt eine manuelle Sequenz
+    -- Fallschirm-Auto-System kurz deaktivieren
     getgenv()._autoParachuteEnabled = false
 
-    -- 1 Sek warten
+    --------------------------------------------------------------------
+    -- 🔥 1 Sekunde warten nachdem Sinkflug beginnt
+    --------------------------------------------------------------------
     task.wait(1)
 
-    -- Fallschirm aktivieren (Space)
+    --------------------------------------------------------------------
+    -- 🔥 SPACE einmal drücken → FALLSCHIRM öffnen
+    --------------------------------------------------------------------
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
     task.wait(0.05)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
 
-    -- Sanft nach unten sinken, bis ca. nahe am Sitz
-    while root.Parent and (root.Position - target).Magnitude > 4 do
+    --------------------------------------------------------------------
+    -- 🔥 Wenn nur noch 10 Studs → Fallschirm lösen
+    --------------------------------------------------------------------
+    while root.Parent do
+        local dist = (root.Position - target).Magnitude
+        if dist <= 10 then
+            -- Fallschirm lösen
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.05)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            break
+        end
         task.wait()
     end
 
-    -- Fallschirm lösen (nochmal Space)
-    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+    --------------------------------------------------------------------
+    -- 🔥 2 Sek Warten nach Fallschirm lösen
+    --------------------------------------------------------------------
+    task.wait(2)
+
+    --------------------------------------------------------------------
+    -- 🔥 Einmal E drücken
+    --------------------------------------------------------------------
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
     task.wait(0.05)
-    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 
-    -- 1 Sek warten
-    task.wait(1)
+    --------------------------------------------------------------------
+    -- 🔥 3 Sekunden warten ob man sitzt
+    --------------------------------------------------------------------
+    task.wait(3)
 
-    -- Einsteigen (E einmal)
-    pressEOnce()
+    local seatPlayer = seat:FindFirstChild("PlayerName")
+    if seatPlayer and seatPlayer.Value == playerName then
+        print("Erfolgreich eingestiegen!")
+        getgenv()._autoParachuteEnabled = true
+        return
+    end
 
-    -- Auto-Parachute wieder aktiv
+    --------------------------------------------------------------------
+    -- ❗ Noch nicht drin → 2. Versuch
+    --------------------------------------------------------------------
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    task.wait(0.05)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+
+    task.wait(3)
+
+    --------------------------------------------------------------------
+    -- ❗ Wenn nach zweitem Versuch immer noch nicht → aufgeben
+    --------------------------------------------------------------------
+    if seatPlayer and seatPlayer.Value ~= playerName then
+        warn("Konnte nicht einsteigen. Aufgabe.")
+    end
+
     getgenv()._autoParachuteEnabled = true
 end
+
 
 -- Suche nach dem nächsten freien Camaro (workspace.Vehicles)
 local function findNearestFreeCamaro(rootPart)
@@ -248,7 +295,7 @@ local function takeOverNearestCamaro(rootPart, playerName)
         return nil
     end
 
-    flyPlayerToCar(rootPart, seat)
+    flyPlayerToCar(root, seat, myName)
 
     if isSeatOwnedByPlayer(seat, playerName) then
         print("Camaro übernommen.")
@@ -304,7 +351,7 @@ local function getCarStrict()
         -- 2. Check: Wir sitzen NICHT -> Hinfliegen mit Fallschirm-Manöver
         if seat then
             warn("Eigenes Auto leer. Fliege Spieler hin (mit Fallschirm-Landung)...")
-            flyPlayerToCar(root, seat)
+            flyPlayerToCar(root, seat, myName)
 
             if isSeatOwnedByPlayer(seat, myName) then
                 print("Erfolgreich ins eigene Auto eingestiegen!")
