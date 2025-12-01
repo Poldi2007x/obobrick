@@ -17,12 +17,9 @@ local function getCar()
     local char = player.Character or player.CharacterAdded:Wait()
     local hum = char:WaitForChild("Humanoid")
 
-    if not hum.SeatPart then
-        warn("Spawning Car...")
-        local remote = ReplicatedStorage:WaitForChild("GarageSpawnVehicle", 5)
-        if remote then remote:FireServer("Chassis", "Deja") end
-        repeat task.wait(0.1) until hum.SeatPart
-    end
+    warn("Spawning Car...")
+    local remote = ReplicatedStorage:WaitForChild("GarageSpawnVehicle", 5)
+    if remote then remote:FireServer("Chassis", "Deja") end
     
     local vehicle = hum.SeatPart.Parent
     return vehicle.PrimaryPart or hum.SeatPart
