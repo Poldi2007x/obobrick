@@ -9,7 +9,7 @@ local HttpService = game:GetService("HttpService")
 
 -- !!! HIER DEINEN GITHUB LINK ZUM ORDNER EINFÜGEN (muss mit / enden) !!!
 -- Beispiel: "https://raw.githubusercontent.com/DeinName/DeinRepo/main/"
-local REPO_URL = "https://github.com/Poldi2007x/obobrick.git/main/" 
+local REPO_URL = "https://github.com/Poldi2007x/obobrick/main/" 
 
 -- Hilfsfunktion: Auto holen
 local function getCar()
