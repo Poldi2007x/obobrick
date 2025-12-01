@@ -8,6 +8,27 @@ local VirtualInputManager     = game:GetService("VirtualInputManager")
 local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/"
 
 -- -------------------------------------------------------------------------
+-- 0. ANTI FALL DAMAGE
+-- -------------------------------------------------------------------------
+local function applyAntiFallDamage(char)
+    local hum  = char:FindFirstChildOfClass("Humanoid")
+    local root = char:FindChild("HumanoidRootPart") or char:FindFirstChild("HumanoidRootPart")
+    if not hum or not root then return end
+
+    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+    hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
+
+    RunService.Heartbeat:Connect(function()
+        if hum.Parent and root.Parent then
+            if root.Velocity.Y < -120 then
+                root.Velocity = Vector3.new(root.Velocity.X, 0, root.Velocity.Z)
+            end
+        end
+    end)
+end
+
+-- -------------------------------------------------------------------------
 -- 1. FLUG-PHYSIK (für Spieler & Auto)
 -- -------------------------------------------------------------------------
 local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
@@ -85,22 +106,12 @@ local function isSeatFree(seat)
     return false
 end
 
-local function pressEUntilSeated(seat, playerName, maxTime)
-    maxTime = maxTime or 5
-    local startTime = tick()
-
-    while tick() - startTime < maxTime do
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-        task.wait(0.05)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-        task.wait(0.15)
-
-        if isSeatOwnedByPlayer(seat, playerName) then
-            return true
-        end
-    end
-
-    return isSeatOwnedByPlayer(seat, playerName)
+-- Nur EINMAL E drücken + 3 Sekunden warten
+local function pressEOnce()
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+    task.wait(0.05)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+    task.wait(3)
 end
 
 -- Suche nach dem nächsten freien Camaro (workspace.Vehicles)
@@ -167,8 +178,10 @@ local function takeOverNearestCamaro(rootPart, playerName)
     bg:Destroy()
     bv:Destroy()
 
-    -- Einsteigen (E-Spam bis man sitzt)
-    if pressEUntilSeated(seat, playerName, 5) then
+    -- Einsteigen (nur 1x E + 3 Sek warten)
+    pressEOnce()
+
+    if isSeatOwnedByPlayer(seat, playerName) then
         print("Camaro übernommen.")
         return camaro.PrimaryPart or seat
     else
@@ -185,6 +198,9 @@ local function getCarStrict()
     local myName = player.Name
     local char   = player.Character or player.CharacterAdded:Wait()
     local root   = char:WaitForChild("HumanoidRootPart")
+
+    -- Anti-Fall-Damage aktivieren
+    applyAntiFallDamage(char)
 
     local vehiclesFolder = workspace:WaitForChild("Vehicles", 5)
 
@@ -249,11 +265,11 @@ local function getCarStrict()
             bg:Destroy()
             bv:Destroy()
 
-            -- E-Press spammen, bis man sitzt
-            warn("Versuche einzusteigen (E)...")
-            local success = pressEUntilSeated(seat, myName, 5)
+            -- Nur 1x E drücken
+            warn("Versuche einzusteigen (E einmal)...")
+            pressEOnce()
 
-            if success then
+            if isSeatOwnedByPlayer(seat, myName) then
                 print("Erfolgreich ins eigene Auto eingestiegen!")
                 return myCar.PrimaryPart or seat
             else
