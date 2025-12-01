@@ -6,34 +6,32 @@ local HttpService = game:GetService("HttpService")
 -- !!! GITHUB RAW LINK !!!
 local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/" 
 
--- 1. Funktion: Physik-Teil holen (Ohne Checks)
+-- 1. Funktion: Auto/Teil holen
 local function getMobileRoot()
     local player = Players.LocalPlayer
     local char = player.Character or player.CharacterAdded:Wait()
     local hum = char:WaitForChild("Humanoid")
     local root = char:WaitForChild("HumanoidRootPart")
 
-    -- IMMER Auto spawnen (egal ob man sitzt oder nicht)
+    -- Immer Auto Spawn Befehl senden
     local remote = ReplicatedStorage:WaitForChild("GarageSpawnVehicle", 2)
     if remote then 
         remote:FireServer("Chassis", "Deja") 
     end
     
-    -- Kurz warten, damit das Auto lädt
     task.wait(1)
 
-    -- Versuch 1: Wir schauen, ob das Spiel den Sitz erkennt
     if hum.SeatPart then
-        return hum.SeatPart -- Wir bewegen den Sitz (und damit das Auto)
+        return hum.SeatPart 
     end
 
-    -- Versuch 2: Fallback -> Wir bewegen einfach DICH (HumanoidRootPart)
     warn("Sitz nicht erkannt! Bewege HumanoidRootPart...")
     return root
 end
 
--- 2. Flug-Physik (Angepasst: Bleibt immer waagerecht!)
-local function flyTo(moverPart, targetPos, speed, bg, bv)
+-- 2. Flug-Physik mit SANFTER LANDUNG
+-- Neuer Parameter: isLanding (true/false)
+local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
     local arrived = false
     local connection
     
@@ -47,23 +45,39 @@ local function flyTo(moverPart, targetPos, speed, bg, bv)
         local diff = targetPos - currentPos
         local dist = diff.Magnitude
         
-        -- BEWEGUNG (Velocity): Geht weiterhin zum echten Ziel (auch hoch/runter)
-        bv.Velocity = diff.Unit * speed
+        -- GESCHWINDIGKEITS-LOGIK
+        local currentSpeed = maxSpeed
         
-        -- DREHUNG (Gyro): Ignoriert die Höhe des Ziels!
+        if isLanding then
+            -- Bremsweg beginnt bei 150 Studs Abstand
+            local brakeDistance = 150
+            if dist < brakeDistance then
+                -- Wir berechnen einen Faktor von 0 bis 1
+                local factor = dist / brakeDistance
+                -- Die Geschwindigkeit wird langsamer, aber nie unter 15 (damit wir ankommen)
+                currentSpeed = math.max(15, maxSpeed * factor)
+            end
+        end
+
+        -- BEWEGUNG SETZEN
+        bv.Velocity = diff.Unit * currentSpeed
+        
+        -- DREHUNG (Gyro) - Waagerecht bleiben
         local flatDist = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(currentPos.X, 0, currentPos.Z)).Magnitude
         
-        if flatDist > 2 then
-            -- Wenn wir uns seitwärts bewegen: Zum Ziel drehen, aber Y gleich lassen (damit es flach bleibt)
+        if flatDist > 5 then
+            -- Zum Ziel drehen, aber Y ignorieren (flach bleiben)
             bg.CFrame = CFrame.new(currentPos, Vector3.new(targetPos.X, currentPos.Y, targetPos.Z))
         else
-            -- Wenn wir nur strikt nach oben/unten fliegen (keine seitwärts Bewegung):
-            -- Behalten wir die aktuelle Blickrichtung bei, zwingen sie aber waagerecht (Pitch/Roll = 0)
+            -- Wenn wir fast nur vertikal fallen: Ausrichtung beibehalten und gerade ziehen
             local _, rotY, _ = moverPart.CFrame:ToOrientation()
             bg.CFrame = CFrame.new(currentPos) * CFrame.fromOrientation(0, rotY, 0)
         end
         
-        if dist < 10 then 
+        -- ANKUNFT CHECK
+        -- Bei Landung sind wir strenger (5 studs), sonst 10
+        local threshold = isLanding and 5 or 10
+        if dist < threshold then 
             arrived = true
             connection:Disconnect()
         end
@@ -74,18 +88,15 @@ end
 
 -- 3. Hauptfunktion
 getgenv().startRoute = function(jsonFileName, speed)
-    -- A) Teil holen, das fliegen soll
     local moverPart = getMobileRoot()
 
-    -- B) JSON Laden
+    -- JSON Laden
     local routeData
     if jsonFileName:find(".json") then
         local url = REPO_URL .. jsonFileName
         print("Lade Route: " .. url)
-        
         local success, response = pcall(function() return game:HttpGet(url) end)
         if not success then return warn("Fehler beim Laden von GitHub!", response) end
-        
         local decodeSuccess, decoded = pcall(function() return HttpService:JSONDecode(response) end)
         if not decodeSuccess then return warn("JSON Fehler:", decoded) end
         routeData = decoded
@@ -93,8 +104,7 @@ getgenv().startRoute = function(jsonFileName, speed)
         routeData = HttpService:JSONDecode(jsonFileName)
     end
 
-    -- C) Physik Setup
-    -- Alte Physik löschen
+    -- Physik Setup
     for _, v in pairs(moverPart:GetChildren()) do
         if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then v:Destroy() end
     end
@@ -108,7 +118,7 @@ getgenv().startRoute = function(jsonFileName, speed)
     bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
     bv.Parent = moverPart
 
-    -- D) Route abfahren
+    -- Route abfahren
     print("Starte Route...")
     for i, point in ipairs(routeData) do
         if not moverPart.Parent then break end
@@ -121,15 +131,19 @@ getgenv().startRoute = function(jsonFileName, speed)
             if i == 1 then
                 -- Start Manöver: Hoch -> Rüber -> Runter
                 local startPos = moverPart.Position
-                -- 1. Hoch (Bleibt jetzt flach!)
-                flyTo(moverPart, Vector3.new(startPos.X, 300, startPos.Z), speed, bg, bv)
-                -- 2. Rüber (Bleibt flach)
-                flyTo(moverPart, Vector3.new(target.X, 300, target.Z), speed, bg, bv)
-                -- 3. Runter (Bleibt flach, keine Sturzflug-Optik)
-                flyTo(moverPart, target, speed, bg, bv)
+                
+                -- 1. Hoch (Schnell, keine Landung)
+                flyTo(moverPart, Vector3.new(startPos.X, 300, startPos.Z), speed, bg, bv, false)
+                
+                -- 2. Rüber (Schnell, keine Landung)
+                flyTo(moverPart, Vector3.new(target.X, 300, target.Z), speed, bg, bv, false)
+                
+                -- 3. Runter (SANFTE LANDUNG AKTIVIEREN)
+                -- Hier setzen wir 'true' am Ende
+                flyTo(moverPart, target, speed, bg, bv, true)
             else
-                -- Normal weiter
-                flyTo(moverPart, target, speed, bg, bv)
+                -- Normal weiter zu den nächsten Punkten (Schnell)
+                flyTo(moverPart, target, speed, bg, bv, false)
             end
         end
     end
