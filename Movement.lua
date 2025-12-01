@@ -100,7 +100,7 @@ local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
             bg.CFrame = CFrame.new(currentPos) * CFrame.fromOrientation(0, rotY, 0)
         end
 
-        local threshold = isLanding and 5 or 10
+        local threshold = isLanding and 10 or 20
         if dist < threshold then
             arrived = true
             if connection then connection:Disconnect() end
