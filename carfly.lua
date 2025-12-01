@@ -1,28 +1,36 @@
---[[ 
-    Speichere dieses Script auf GitHub als "carfly.lua" 
-]]
-
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 
--- !!! HIER DEINEN GITHUB LINK ZUM ORDNER EINFÜGEN (muss mit / enden) !!!
--- Beispiel: "https://raw.githubusercontent.com/DeinName/DeinRepo/main/"
-local REPO_URL = "https://github.com/Poldi2007x/obobrick/main/" 
+-- !!! GITHUB RAW LINK !!!
+local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/" 
 
--- Hilfsfunktion: Auto holen
+-- 1. Auto Funktion (Vereinfacht)
 local function getCar()
     local player = Players.LocalPlayer
     local char = player.Character or player.CharacterAdded:Wait()
     local hum = char:WaitForChild("Humanoid")
 
-    warn("Spawning Car...")
-    local remote = ReplicatedStorage:WaitForChild("GarageSpawnVehicle", 5)
-    if remote then remote:FireServer("Chassis", "Deja") end
+    -- Wenn man nicht sitzt: Spawnen & kurz warten
+    if not hum.SeatPart then
+        local remote = ReplicatedStorage:WaitForChild("GarageSpawnVehicle", 2)
+        if remote then 
+            remote:FireServer("Chassis", "Deja") 
+        end
+        
+        -- Einfach 1.5 Sekunden warten, damit das Auto da ist. Kein Loop.
+        task.wait(1.5)
+    end
+    
+    -- Auto zurückgeben (falls vorhanden)
+    if hum.SeatPart then
+        return hum.SeatPart.Parent.PrimaryPart or hum.SeatPart
+    end
+    return nil
 end
 
--- Hilfsfunktion: Fliegen
+-- 2. Flug-Physik
 local function flyTo(rootPart, targetPos, speed, bg, bv)
     local arrived = false
     local connection
@@ -40,7 +48,7 @@ local function flyTo(rootPart, targetPos, speed, bg, bv)
         bg.CFrame = CFrame.new(currentPos, targetPos)
         bv.Velocity = diff.Unit * speed
         
-        if dist < 10 then -- Radius zum Ankommen
+        if dist < 10 then 
             arrived = true
             connection:Disconnect()
         end
@@ -49,35 +57,34 @@ local function flyTo(rootPart, targetPos, speed, bg, bv)
     repeat task.wait() until arrived or not rootPart.Parent
 end
 
--- HAUPTFUNKTION (Global verfügbar machen)
+-- 3. Hauptfunktion
 getgenv().startRoute = function(jsonFileName, speed)
-    -- 1. JSON abrufen
-    local routeData
+    -- A) Auto holen
+    local rootPart = getCar()
     
-    -- Prüfen, ob es eine URL/Dateiname ist oder direkter JSON Text
+    -- Falls das Spawnen zu lange gedauert hat und man immer noch nicht sitzt:
+    if not rootPart then
+        warn("Kein Auto gefunden! Bitte sitz ins Auto.")
+        return
+    end
+
+    -- B) JSON Laden
+    local routeData
     if jsonFileName:find(".json") then
         local url = REPO_URL .. jsonFileName
-        print("Lade Route von: " .. url)
+        print("Lade Route: " .. url)
         
-        local success, response = pcall(function()
-            return game:HttpGet(url)
-        end)
+        local success, response = pcall(function() return game:HttpGet(url) end)
+        if not success then return warn("Fehler beim Laden von GitHub!", response) end
         
-        if not success then
-            warn("Fehler beim Laden der Datei von GitHub: " .. tostring(response))
-            return
-        end
-        
-        routeData = HttpService:JSONDecode(response)
+        local decodeSuccess, decoded = pcall(function() return HttpService:JSONDecode(response) end)
+        if not decodeSuccess then return warn("JSON Fehler:", decoded) end
+        routeData = decoded
     else
-        -- Falls du den JSON String direkt eingibst
         routeData = HttpService:JSONDecode(jsonFileName)
     end
 
-    -- 2. Physik Setup
-    local rootPart = getCar()
-    
-    -- Alte Gyros löschen falls vorhanden
+    -- C) Physik Setup
     for _, v in pairs(rootPart:GetChildren()) do
         if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then v:Destroy() end
     end
@@ -91,35 +98,31 @@ getgenv().startRoute = function(jsonFileName, speed)
     bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
     bv.Parent = rootPart
 
-    print("Starte Route mit Speed:", speed)
-
-    -- 3. Route abfliegen
+    -- D) Route abfahren
     for i, point in ipairs(routeData) do
+        if not rootPart.Parent then break end
+
         if point.type == "wait" then
             task.wait(point.time or 0.5)
         elseif point.type == "move" then
             local target = Vector3.new(point.x, point.y, point.z)
             
             if i == 1 then
-                -- Erster Punkt Logik (Hoch -> Rüber -> Runter)
+                -- Start Manöver
                 local startPos = rootPart.Position
-                -- A: Hoch (300)
                 flyTo(rootPart, Vector3.new(startPos.X, 300, startPos.Z), speed, bg, bv)
-                -- B: Rüber (300)
                 flyTo(rootPart, Vector3.new(target.X, 300, target.Z), speed, bg, bv)
-                -- C: Runter
                 flyTo(rootPart, target, speed, bg, bv)
             else
-                -- Restliche Punkte direkt
+                -- Normal
                 flyTo(rootPart, target, speed, bg, bv)
             end
         end
     end
     
-    -- Clean up
-    bg:Destroy()
-    bv:Destroy()
-    print("Route fertig!")
+    if bg then bg:Destroy() end
+    if bv then bv:Destroy() end
+    print("Fertig!")
 end
 
-print("CarFly Script geladen! Nutze: startRoute('prison.json', 300)")
+print("Geladen. Nutze: startRoute('Prison.json', 300)")
