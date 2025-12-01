@@ -7,31 +7,54 @@ local VirtualInputManager     = game:GetService("VirtualInputManager")
 -- !!! GITHUB RAW LINK !!!
 local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/"
 
--- -------------------------------------------------------------------------
--- 0. ANTI FALL DAMAGE
--- -------------------------------------------------------------------------
+-- =======================================================
+-- BESSERES FALLSCHIRM-SYSTEM (drückt Space NUR EINMAL)
+-- =======================================================
 local function setupAutoParachute(char)
     local humanoid = char:FindFirstChildOfClass("Humanoid")
-    local rootPart = char:FindFirstChild("HumanoidRootPart")
-    if not humanoid or not rootPart then return end
+    local root     = char:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not root then return end
+
+    -- Wird vom Script gesetzt, wenn flyTo aktiv ist
+    getgenv()._inFlyTo = false
+
+    local lastParachute = 0
 
     RunService.Heartbeat:Connect(function()
-        if not rootPart.Parent then return end
+        if not root.Parent then return end
+        
+        -- Falls gerade FlyTo läuft → kein Fallschirm
+        if getgenv()._inFlyTo == true then
+            return
+        end
+        
+        -- Falls Sitz existiert → kein Fallschirm im Auto
+        if humanoid.SeatPart then
+            return
+        end
 
-        -- Wenn fall speed sehr hoch -> Once Space drücken
-        if rootPart.Velocity.Y < -120 then
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-            task.wait(0.05)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+        -- echte Fallgeschwindigkeit
+        if root.Velocity.Y < -120 then
+            if tick() - lastParachute > 1.5 then
+                lastParachute = tick()
+
+                -- EINMAL SPACE DRÜCKEN
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+                task.wait(0.05)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end
         end
     end)
 end
+
 
 
 -- -------------------------------------------------------------------------
 -- 1. FLUG-PHYSIK (für Spieler & Auto)
 -- -------------------------------------------------------------------------
 local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
+    getgenv()._inFlyTo = true
+
     local arrived = false
     local connection
 
@@ -76,12 +99,15 @@ local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
         if dist < threshold then
             arrived = true
             if connection then connection:Disconnect() end
+            getgenv()._inFlyTo = false
         end
     end)
 
     repeat
         task.wait()
     until arrived or not moverPart.Parent
+
+    getgenv()._inFlyTo = false
 end
 
 -- -------------------------------------------------------------------------
