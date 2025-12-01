@@ -10,20 +10,19 @@ local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/"
 -- -------------------------------------------------------------------------
 -- 0. ANTI FALL DAMAGE
 -- -------------------------------------------------------------------------
-local function applyAntiFallDamage(char)
-    local hum  = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not hum or not root then return end
-
-    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-    hum:SetStateEnabled(Enum.HumanoidStateType.Freefall, false)
+local function setupAutoParachute(char)
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    local rootPart = char:FindFirstChild("HumanoidRootPart")
+    if not humanoid or not rootPart then return end
 
     RunService.Heartbeat:Connect(function()
-        if hum.Parent and root.Parent then
-            if root.Velocity.Y < -120 then
-                root.Velocity = Vector3.new(root.Velocity.X, 0, root.Velocity.Z)
-            end
+        if not rootPart.Parent then return end
+
+        -- Wenn fall speed sehr hoch -> Once Space drücken
+        if rootPart.Velocity.Y < -120 then
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.05)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
         end
     end)
 end
@@ -201,7 +200,7 @@ local function getCarStrict()
     local root   = char:WaitForChild("HumanoidRootPart")
 
     -- Anti-Fall-Damage aktivieren
-    applyAntiFallDamage(char)
+    setupAutoParachute(char)
 
     local vehiclesFolder = workspace:WaitForChild("Vehicles", 5)
 
