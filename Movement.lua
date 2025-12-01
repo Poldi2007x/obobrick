@@ -12,7 +12,7 @@ local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/"
 -- -------------------------------------------------------------------------
 local function applyAntiFallDamage(char)
     local hum  = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindChild("HumanoidRootPart") or char:FindFirstChild("HumanoidRootPart")
+    local root = char:FindFirstChild("HumanoidRootPart")
     if not hum or not root then return end
 
     hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
@@ -27,6 +27,7 @@ local function applyAntiFallDamage(char)
         end
     end)
 end
+
 
 -- -------------------------------------------------------------------------
 -- 1. FLUG-PHYSIK (für Spieler & Auto)
