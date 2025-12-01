@@ -1,29 +1,35 @@
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local HttpService = game:GetService("HttpService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local ReplicatedStorage       = game:GetService("ReplicatedStorage")
+local Players                 = game:GetService("Players")
+local RunService              = game:GetService("RunService")
+local HttpService             = game:GetService("HttpService")
+local VirtualInputManager     = game:GetService("VirtualInputManager")
 
 -- !!! GITHUB RAW LINK !!!
-local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/" 
+local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/"
 
 -- -------------------------------------------------------------------------
--- 1. FLUG-PHYSIK (Bleibt gleich, brauchen wir für Spieler & Auto)
+-- 1. FLUG-PHYSIK (für Spieler & Auto)
 -- -------------------------------------------------------------------------
 local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
     local arrived = false
     local connection
-    
+
     connection = RunService.Heartbeat:Connect(function()
-        if not moverPart or not moverPart.Parent then 
+        if not moverPart or not moverPart.Parent then
             if connection then connection:Disconnect() end
-            return 
+            return
         end
-        
+
         local currentPos = moverPart.Position
-        local diff = targetPos - currentPos
-        local dist = diff.Magnitude
-        
+        local diff       = targetPos - currentPos
+        local dist       = diff.Magnitude
+
+        if dist == 0 then
+            arrived = true
+            if connection then connection:Disconnect() end
+            return
+        end
+
         -- Speed Control
         local currentSpeed = maxSpeed
         if isLanding then
@@ -35,8 +41,8 @@ local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
         end
 
         bv.Velocity = diff.Unit * currentSpeed
-        
-        -- Gyro Control (Waagerecht)
+
+        -- Gyro Control (waagerecht ausrichten)
         local flatDist = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(currentPos.X, 0, currentPos.Z)).Magnitude
         if flatDist > 5 then
             bg.CFrame = CFrame.new(currentPos, Vector3.new(targetPos.X, currentPos.Y, targetPos.Z))
@@ -44,188 +50,340 @@ local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
             local _, rotY, _ = moverPart.CFrame:ToOrientation()
             bg.CFrame = CFrame.new(currentPos) * CFrame.fromOrientation(0, rotY, 0)
         end
-        
+
         local threshold = isLanding and 5 or 10
-        if dist < threshold then 
+        if dist < threshold then
             arrived = true
-            connection:Disconnect()
+            if connection then connection:Disconnect() end
         end
     end)
-    
-    repeat task.wait() until arrived or not moverPart.Parent
+
+    repeat
+        task.wait()
+    until arrived or not moverPart.Parent
 end
 
 -- -------------------------------------------------------------------------
--- 2. AUTO-LOGIK (Suchen -> Value.Parent -> Hinfliegen -> Einsteigen)
+-- 2. HILFSFUNKTIONEN FÜR SITZE & CAMARO-FALLBACK
+-- -------------------------------------------------------------------------
+
+local function isSeatOwnedByPlayer(seat, playerName)
+    if not seat then return false end
+    local pn = seat:FindFirstChild("PlayerName")
+    if pn and typeof(pn.Value) == "string" then
+        return pn.Value == playerName
+    end
+    return false
+end
+
+local function isSeatFree(seat)
+    if not seat then return false end
+    local pn = seat:FindFirstChild("PlayerName")
+    if pn and typeof(pn.Value) == "string" then
+        return pn.Value == ""
+    end
+    return false
+end
+
+local function pressEUntilSeated(seat, playerName, maxTime)
+    maxTime = maxTime or 5
+    local startTime = tick()
+
+    while tick() - startTime < maxTime do
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        task.wait(0.15)
+
+        if isSeatOwnedByPlayer(seat, playerName) then
+            return true
+        end
+    end
+
+    return isSeatOwnedByPlayer(seat, playerName)
+end
+
+-- Suche nach dem nächsten freien Camaro (workspace.Vehicles)
+local function findNearestFreeCamaro(rootPart)
+    if not rootPart then return nil, nil end
+
+    local vehicles = workspace:FindFirstChild("Vehicles")
+    if not vehicles then return nil, nil end
+
+    local nearestCar  = nil
+    local nearestSeat = nil
+    local nearestDist = math.huge
+
+    for _, v in ipairs(vehicles:GetChildren()) do
+        if v.Name == "Camaro" then
+            local seat = v:FindFirstChild("Seat")
+            if seat and isSeatFree(seat) then
+                local dist = (rootPart.Position - seat.Position).Magnitude
+                if dist < nearestDist then
+                    nearestDist = dist
+                    nearestCar  = v
+                    nearestSeat = seat
+                end
+            end
+        end
+    end
+
+    return nearestCar, nearestSeat
+end
+
+-- Fliegt zum nächsten freien Camaro, versucht einzusteigen und gibt das Auto zurück
+local function takeOverNearestCamaro(rootPart, playerName)
+    local camaro, seat = findNearestFreeCamaro(rootPart)
+    if not camaro or not seat then
+        warn("Kein freier Camaro gefunden.")
+        return nil
+    end
+
+    local startPos = rootPart.Position
+    local target   = seat.Position
+
+    -- Physik am Spieler setzen
+    for _, v in pairs(rootPart:GetChildren()) do
+        if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then
+            v:Destroy()
+        end
+    end
+
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bg.P         = 3000
+    bg.D         = 500
+    bg.Parent    = rootPart
+
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.Parent   = rootPart
+
+    -- Hoch auf 360 → rüber → landen (Speed 150)
+    flyTo(rootPart, Vector3.new(startPos.X, 360, startPos.Z), 150, bg, bv, false)
+    flyTo(rootPart, Vector3.new(target.X, 360, target.Z),     150, bg, bv, false)
+    flyTo(rootPart, target,                                   150, bg, bv, true)
+
+    bg:Destroy()
+    bv:Destroy()
+
+    -- Einsteigen (E-Spam bis man sitzt)
+    if pressEUntilSeated(seat, playerName, 5) then
+        print("Camaro übernommen.")
+        return camaro.PrimaryPart or seat
+    else
+        warn("Konnte nicht in den Camaro einsteigen.")
+        return nil
+    end
+end
+
+-- -------------------------------------------------------------------------
+-- 3. AUTO-LOGIK (eigenes Auto -> spawnen -> Camaro-Fallback)
 -- -------------------------------------------------------------------------
 local function getCarStrict()
     local player = Players.LocalPlayer
     local myName = player.Name
-    local char = player.Character or player.CharacterAdded:Wait()
-    local root = char:WaitForChild("HumanoidRootPart")
-    
+    local char   = player.Character or player.CharacterAdded:Wait()
+    local root   = char:WaitForChild("HumanoidRootPart")
+
     local vehiclesFolder = workspace:WaitForChild("Vehicles", 5)
-    
+
     -- Sucht das Auto-Model über den VehicleState
     local function findMyCarModel()
         if not vehiclesFolder then return nil end
         for _, car in pairs(vehiclesFolder:GetChildren()) do
-            -- Wir suchen das Value
             local stateValue = car:FindFirstChild("_VehicleState_" .. myName)
             if stateValue then
-                -- Gefunden! Wir nehmen den Parent (das Auto Model)
-                return stateValue.Parent 
+                return stateValue.Parent
             end
         end
         return nil
     end
 
-    print("Suche nach Auto...")
+    print("Suche nach eigenem Auto...")
     local myCar = findMyCarModel()
 
     -- ---------------------------------------------------
-    -- FALL A: Auto auf der Map gefunden
+    -- FALL A: Eigenes Auto auf der Map gefunden
     -- ---------------------------------------------------
     if myCar then
         print("Auto gefunden: " .. myCar.Name)
         local seat = myCar:FindFirstChild("Seat")
-        
+
         -- 1. Check: Sitzen wir schon drin?
-        if seat and seat:FindFirstChild("PlayerName") and seat.PlayerName.Value == myName then
+        if seat and isSeatOwnedByPlayer(seat, myName) then
             print("Du sitzt bereits im Auto.")
             return myCar.PrimaryPart or seat
         end
 
-        -- 2. Check: Wir sitzen NICHT -> HINFLIEGEN (Speed 150)
+        -- 2. Check: Wir sitzen NICHT -> Hinfliegen (Speed 150)
         if seat then
-            warn("Auto leer. Fliege Spieler hin (Speed 150)...")
-            
-            -- Spieler Physik Setup
+            warn("Eigenes Auto leer. Fliege Spieler hin (Speed 150)...")
+
             for _, v in pairs(root:GetChildren()) do
-                if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then v:Destroy() end
+                if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then
+                    v:Destroy()
+                end
             end
-            local bg = Instance.new("BodyGyro", root); bg.MaxTorque = Vector3.new(math.huge,math.huge,math.huge); bg.P=3000; bg.D=500
-            local bv = Instance.new("BodyVelocity", root); bv.MaxForce = Vector3.new(math.huge,math.huge,math.huge)
 
-            local target = seat.Position
+            local bg = Instance.new("BodyGyro")
+            bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+            bg.P         = 3000
+            bg.D         = 500
+            bg.Parent    = root
+
+            local bv = Instance.new("BodyVelocity")
+            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            bv.Parent   = root
+
+            local target   = seat.Position
             local startPos = root.Position
-            
-            -- A: Hoch auf 360 (Sicherheits-Höhe)
-            flyTo(root, Vector3.new(startPos.X, 360, startPos.Z), 150, bg, bv, false)
-            -- B: Rüber zum Auto auf 360
-            flyTo(root, Vector3.new(target.X, 360, target.Z), 150, bg, bv, false)
-            -- C: Runter (Sanfte Landung)
-            flyTo(root, target, 150, bg, bv, true)
 
-            -- Physik entfernen
-            bg:Destroy(); bv:Destroy()
-            
-            -- Einsteigen (E drücken)
-            warn("Drücke E...")
-            task.wait(0.5)
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-            task.wait(0.1)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-            
-            task.wait(2) -- Warten bis Animation fertig
-            
-            -- Prüfen ob wir jetzt sitzen
-            if seat.PlayerName.Value == myName then
-                print("Erfolgreich eingestiegen!")
+            -- Hoch auf 360 (Sicherheits-Höhe)
+            flyTo(root, Vector3.new(startPos.X, 360, startPos.Z), 150, bg, bv, false)
+            -- Rüber zum Auto auf 360
+            flyTo(root, Vector3.new(target.X,    360, target.Z), 150, bg, bv, false)
+            -- Runter (sanfte Landung)
+            flyTo(root, target,                                150, bg, bv, true)
+
+            bg:Destroy()
+            bv:Destroy()
+
+            -- E-Press spammen, bis man sitzt
+            warn("Versuche einzusteigen (E)...")
+            local success = pressEUntilSeated(seat, myName, 5)
+
+            if success then
+                print("Erfolgreich ins eigene Auto eingestiegen!")
                 return myCar.PrimaryPart or seat
             else
-                warn("FEHLER: Konnte nicht einsteigen. Breche ab!")
-                return nil -- Abbruch, damit Spieler nicht alleine fliegt
+                warn("Konnte nicht ins eigene Auto einsteigen → versuche Spawn/Fallback.")
             end
         end
     end
 
     -- ---------------------------------------------------
-    -- FALL B: Kein Auto gefunden -> SPAWNEN
+    -- FALL B: Kein Auto / nicht drin -> Spawnen
     -- ---------------------------------------------------
-    warn("Kein Auto gefunden. Spawne neu...")
-    local remote = ReplicatedStorage:WaitForChild("GarageSpawnVehicle", 2)
-    if remote then 
-        remote:FireServer("Chassis", "Deja") 
+    warn("Kein nutzbares Auto gefunden. Versuche Spawn über Garage...")
+
+    local remote = ReplicatedStorage:FindFirstChild("GarageSpawnVehicle")
+    if remote then
+        remote:FireServer("Chassis", "Deja")
+    else
+        warn("GarageSpawnVehicle Remote nicht gefunden.")
     end
-    
-    -- Warten und prüfen
+
+    -- Kurze Zeit warten und prüfen, ob eigenes Auto gespawnt ist
+    local spawnedCar
     for i = 1, 30 do
         task.wait(0.1)
-        myCar = findMyCarModel() -- Erneut suchen
-        if myCar then
-            local seat = myCar:FindFirstChild("Seat")
-            -- Beim Spawnen sitzt man meistens automatisch
-            if seat and seat:FindFirstChild("PlayerName") and seat.PlayerName.Value == myName then
-                print("Auto gespawnt und eingestiegen!")
-                return myCar.PrimaryPart or seat
+        spawnedCar = findMyCarModel()
+        if spawnedCar then
+            local seat = spawnedCar:FindFirstChild("Seat")
+            if seat and isSeatOwnedByPlayer(seat, myName) then
+                print("Auto gespawnt und du sitzt drin.")
+                return spawnedCar.PrimaryPart or seat
             end
         end
     end
 
-    warn("FEHLER: Auto Spawn fehlgeschlagen.")
-    return nil -- Abbruch
+    warn("Auto Spawn fehlgeschlagen oder du sitzt nicht drin.")
+
+    -- ---------------------------------------------------
+    -- FALL C: Kein eigenes Auto & Spawn klappt nicht -> Camaro suchen
+    -- ---------------------------------------------------
+    warn("Fallback: Suche nach nächstem freien Camaro in workspace.Vehicles...")
+    local camaroMover = takeOverNearestCamaro(root, myName)
+    if camaroMover then
+        print("Camaro als Ersatzfahrzeug übernommen.")
+        return camaroMover
+    end
+
+    warn("Kein Auto verfügbar. Abbruch.")
+    return nil
 end
 
 -- -------------------------------------------------------------------------
--- 3. ROUTE STARTEN
+-- 4. ROUTE STARTEN (mit Auto / Camaro)
 -- -------------------------------------------------------------------------
 getgenv().startRoute = function(jsonFileName, speed)
-    -- Hier holen wir das Auto (oder steigen ein)
+    speed = speed or 300
+
+    -- Auto holen (oder einsteigen / Camaro übernehmen)
     local moverPart = getCarStrict()
 
-    -- WICHTIG: Wenn kein Auto da ist -> STOPP
     if not moverPart then
-        warn("ABBRUCH: Keine Route ohne Auto.")
-        return 
+        warn("ABBRUCH: Keine Route ohne Fahrzeug möglich.")
+        return
     end
 
+    -- Route laden (GitHub .json oder direkter JSON-String)
     local routeData
     if jsonFileName:find(".json") then
         local url = REPO_URL .. jsonFileName
-        print("Lade Route: " .. url)
-        local success, response = pcall(function() return game:HttpGet(url) end)
-        if not success then return warn("Fehler beim Laden von GitHub!", response) end
+        print("Lade Route von GitHub: " .. url)
+        local success, response = pcall(function()
+            return game:HttpGet(url)
+        end)
+
+        if not success then
+            warn("Fehler beim Laden von GitHub:", response)
+            return
+        end
+
         routeData = HttpService:JSONDecode(response)
     else
         routeData = HttpService:JSONDecode(jsonFileName)
     end
 
-    -- Physik Setup (Am Auto)
+    -- Physik am Fahrzeug setzen
     for _, v in pairs(moverPart:GetChildren()) do
-        if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then v:Destroy() end
+        if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then
+            v:Destroy()
+        end
     end
 
     local bg = Instance.new("BodyGyro")
-    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge); bg.P = 3000; bg.D = 500; bg.Parent = moverPart
-    local bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge); bv.Parent = moverPart
+    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bg.P         = 3000
+    bg.D         = 500
+    bg.Parent    = moverPart
 
-    print("Starte Route mit Auto...")
-    
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.Parent   = moverPart
+
+    print("Starte Route mit Fahrzeug...")
+
     for i, point in ipairs(routeData) do
-        if not moverPart.Parent then break end
+        if not moverPart.Parent then
+            warn("Fahrzeug existiert nicht mehr. Route abgebrochen.")
+            break
+        end
 
         if point.type == "wait" then
             task.wait(point.time or 0.5)
+
         elseif point.type == "move" then
             local target = Vector3.new(point.x, point.y, point.z)
-            
+
             if i == 1 then
                 local startPos = moverPart.Position
                 -- Hoch -> Rüber -> Landen
                 flyTo(moverPart, Vector3.new(startPos.X, 300, startPos.Z), speed, bg, bv, false)
-                flyTo(moverPart, Vector3.new(target.X, 300, target.Z), speed, bg, bv, false)
-                flyTo(moverPart, target, speed, bg, bv, true)
+                flyTo(moverPart, Vector3.new(target.X,    300, target.Z), speed, bg, bv, false)
+                flyTo(moverPart, target,                                speed, bg, bv, true)
             else
                 flyTo(moverPart, target, speed, bg, bv, false)
             end
         end
     end
-    
+
     if bg then bg:Destroy() end
     if bv then bv:Destroy() end
-    print("Fertig!")
+
+    print("Route fertig!")
 end
 
 print("Geladen. Nutze: startRoute('Prison.json', 300)")
