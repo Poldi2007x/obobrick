@@ -7,23 +7,28 @@ local VirtualInputManager     = game:GetService("VirtualInputManager")
 -- !!! GITHUB RAW LINK !!!
 local REPO_URL = "https://raw.githubusercontent.com/Poldi2007x/obobrick/main/"
 
+getgenv()._inFlyTo = false
+getgenv()._autoParachuteEnabled = true
+
 -- =======================================================
--- BESSERES FALLSCHIRM-SYSTEM (drückt Space NUR EINMAL)
+-- 0. BESSERES FALLSCHIRM-SYSTEM (drückt Space NUR EINMAL)
 -- =======================================================
 local function setupAutoParachute(char)
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     local root     = char:FindFirstChild("HumanoidRootPart")
     if not humanoid or not root then return end
 
-    -- Wird vom Script gesetzt, wenn flyTo aktiv ist
-    getgenv()._inFlyTo = false
-
     local lastParachute = 0
 
     RunService.Heartbeat:Connect(function()
         if not root.Parent then return end
+
+        -- Globaler Schalter (z.B. während manuellem Auto-Lande-Manöver)
+        if getgenv()._autoParachuteEnabled == false then
+            return
+        end
         
-        -- Falls gerade FlyTo läuft → kein Fallschirm
+        -- Falls gerade FlyTo läuft → kein Fallschirm (Route oder Auto-Fly)
         if getgenv()._inFlyTo == true then
             return
         end
@@ -47,8 +52,6 @@ local function setupAutoParachute(char)
     end)
 end
 
-
-
 -- -------------------------------------------------------------------------
 -- 1. FLUG-PHYSIK (für Spieler & Auto)
 -- -------------------------------------------------------------------------
@@ -61,6 +64,7 @@ local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
     connection = RunService.Heartbeat:Connect(function()
         if not moverPart or not moverPart.Parent then
             if connection then connection:Disconnect() end
+            getgenv()._inFlyTo = false
             return
         end
 
@@ -71,6 +75,7 @@ local function flyTo(moverPart, targetPos, maxSpeed, bg, bv, isLanding)
         if dist == 0 then
             arrived = true
             if connection then connection:Disconnect() end
+            getgenv()._inFlyTo = false
             return
         end
 
@@ -140,6 +145,73 @@ local function pressEOnce()
     task.wait(3)
 end
 
+-- Spezielles Anflug-Manöver zum Auto mit Fallschirmsequenz
+local function flyPlayerToCar(root, seat)
+    if not root or not root.Parent or not seat then return end
+
+    -- Physik reset
+    for _, v in pairs(root:GetChildren()) do
+        if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then
+            v:Destroy()
+        end
+    end
+
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    bg.P         = 3000
+    bg.D         = 500
+    bg.Parent    = root
+
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.Parent   = root
+
+    local startPos = root.Position
+    local target   = seat.Position
+
+    -- A: Hoch auf 360
+    flyTo(root, Vector3.new(startPos.X, 360, startPos.Z), 150, bg, bv, false)
+    -- B: Rüber auf 360
+    flyTo(root, Vector3.new(target.X, 360, target.Z),     150, bg, bv, false)
+    -- C: Nur bis etwas über dem Seat runter (z.B. +10)
+    flyTo(root, Vector3.new(target.X, target.Y + 10, target.Z), 150, bg, bv, false)
+
+    -- Aktive Fly-Steuerung beenden
+    bg:Destroy()
+    bv:Destroy()
+    getgenv()._inFlyTo = false
+
+    -- Auto-Parachute kurz deaktivieren, wir machen jetzt eine manuelle Sequenz
+    getgenv()._autoParachuteEnabled = false
+
+    -- 1 Sek warten
+    task.wait(1)
+
+    -- Fallschirm aktivieren (Space)
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+    task.wait(0.05)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+
+    -- Sanft nach unten sinken, bis ca. nahe am Sitz
+    while root.Parent and (root.Position - target).Magnitude > 4 do
+        task.wait()
+    end
+
+    -- Fallschirm lösen (nochmal Space)
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+    task.wait(0.05)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+
+    -- 1 Sek warten
+    task.wait(1)
+
+    -- Einsteigen (E einmal)
+    pressEOnce()
+
+    -- Auto-Parachute wieder aktiv
+    getgenv()._autoParachuteEnabled = true
+end
+
 -- Suche nach dem nächsten freien Camaro (workspace.Vehicles)
 local function findNearestFreeCamaro(rootPart)
     if not rootPart then return nil, nil end
@@ -168,7 +240,7 @@ local function findNearestFreeCamaro(rootPart)
     return nearestCar, nearestSeat
 end
 
--- Fliegt zum nächsten freien Camaro, versucht einzusteigen und gibt das Auto zurück
+-- Fliegt zum nächsten freien Camaro, nutzt das gleiche Fallschirm-Auto-Manöver
 local function takeOverNearestCamaro(rootPart, playerName)
     local camaro, seat = findNearestFreeCamaro(rootPart)
     if not camaro or not seat then
@@ -176,36 +248,7 @@ local function takeOverNearestCamaro(rootPart, playerName)
         return nil
     end
 
-    local startPos = rootPart.Position
-    local target   = seat.Position
-
-    -- Physik am Spieler setzen
-    for _, v in pairs(rootPart:GetChildren()) do
-        if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then
-            v:Destroy()
-        end
-    end
-
-    local bg = Instance.new("BodyGyro")
-    bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-    bg.P         = 3000
-    bg.D         = 500
-    bg.Parent    = rootPart
-
-    local bv = Instance.new("BodyVelocity")
-    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-    bv.Parent   = rootPart
-
-    -- Hoch auf 360 → rüber → landen (Speed 150)
-    flyTo(rootPart, Vector3.new(startPos.X, 360, startPos.Z), 150, bg, bv, false)
-    flyTo(rootPart, Vector3.new(target.X, 360, target.Z),     150, bg, bv, false)
-    flyTo(rootPart, target,                                   150, bg, bv, true)
-
-    bg:Destroy()
-    bv:Destroy()
-
-    -- Einsteigen (nur 1x E + 3 Sek warten)
-    pressEOnce()
+    flyPlayerToCar(rootPart, seat)
 
     if isSeatOwnedByPlayer(seat, playerName) then
         print("Camaro übernommen.")
@@ -225,7 +268,7 @@ local function getCarStrict()
     local char   = player.Character or player.CharacterAdded:Wait()
     local root   = char:WaitForChild("HumanoidRootPart")
 
-    -- Anti-Fall-Damage aktivieren
+    -- Fallschirm-Auto-System aktivieren
     setupAutoParachute(char)
 
     local vehiclesFolder = workspace:WaitForChild("Vehicles", 5)
@@ -258,42 +301,10 @@ local function getCarStrict()
             return myCar.PrimaryPart or seat
         end
 
-        -- 2. Check: Wir sitzen NICHT -> Hinfliegen (Speed 150)
+        -- 2. Check: Wir sitzen NICHT -> Hinfliegen mit Fallschirm-Manöver
         if seat then
-            warn("Eigenes Auto leer. Fliege Spieler hin (Speed 150)...")
-
-            for _, v in pairs(root:GetChildren()) do
-                if v:IsA("BodyGyro") or v:IsA("BodyVelocity") then
-                    v:Destroy()
-                end
-            end
-
-            local bg = Instance.new("BodyGyro")
-            bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-            bg.P         = 3000
-            bg.D         = 500
-            bg.Parent    = root
-
-            local bv = Instance.new("BodyVelocity")
-            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-            bv.Parent   = root
-
-            local target   = seat.Position
-            local startPos = root.Position
-
-            -- Hoch auf 360 (Sicherheits-Höhe)
-            flyTo(root, Vector3.new(startPos.X, 360, startPos.Z), 150, bg, bv, false)
-            -- Rüber zum Auto auf 360
-            flyTo(root, Vector3.new(target.X,    360, target.Z), 150, bg, bv, false)
-            -- Runter (sanfte Landung)
-            flyTo(root, target,                                150, bg, bv, true)
-
-            bg:Destroy()
-            bv:Destroy()
-
-            -- Nur 1x E drücken
-            warn("Versuche einzusteigen (E einmal)...")
-            pressEOnce()
+            warn("Eigenes Auto leer. Fliege Spieler hin (mit Fallschirm-Landung)...")
+            flyPlayerToCar(root, seat)
 
             if isSeatOwnedByPlayer(seat, myName) then
                 print("Erfolgreich ins eigene Auto eingestiegen!")
